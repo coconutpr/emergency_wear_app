@@ -1,0 +1,22 @@
+name: emergency_wear_app
+description: An emergency application in case of distress.
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  geolocator: ^14.0.2
+  permission_handler: ^12.0.1
+  sensors_plus: ^7.0.0
+  vibration: ^3.1.4
+  url_launcher: ^6.1.7
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
