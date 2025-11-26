@@ -2,16 +2,16 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:sensors_plus/sensors_plus.dart';
 import 'package:vibration/vibration.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   runApp(const EmergencyWearApp());
 }
 
 class EmergencyWearApp extends StatelessWidget {
-  const EmergencyWearApp({Key? key}) : super(key: key);
+  const EmergencyWearApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -21,128 +21,142 @@ class EmergencyWearApp extends StatelessWidget {
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.redAccent),
       ),
-      home: const EmergencyHomePage(),
       debugShowCheckedModeBanner: false,
+      home: const EmergencyHomePage(),
     );
   }
 }
 
+// -----------------------------------------------------------------------------
+// HOME PAGE (BOTÓN SOS)
+// -----------------------------------------------------------------------------
 class EmergencyHomePage extends StatefulWidget {
-  const EmergencyHomePage({Key? key}) : super(key: key);
+  const EmergencyHomePage({super.key});
 
   @override
   State<EmergencyHomePage> createState() => _EmergencyHomePageState();
 }
 
-class _EmergencyHomePageState extends State<EmergencyHomePage> {
-  bool _sosActive = false;
+class _EmergencyHomePageState extends State<EmergencyHomePage>
+    with SingleTickerProviderStateMixin {
   bool _countingDown = false;
   int _countdown = 3;
-  Timer? _countdownTimer;
+  Timer? _timer;
 
-  // sensors
-  StreamSubscription<AccelerometerEvent>? _accSub;
-  StreamSubscription<GyroscopeEvent>? _gyroSub;
-  double _ax = 0, _ay = 0, _az = 0;
-  double _gx = 0, _gy = 0, _gz = 0;
+  late AnimationController _pulseController;
 
-  // location
+  String _emergencyNumber = "";
   Position? _lastPosition;
 
-  final String _emergencyNumber = "";
-  final String _emergencyMessagePrefix = "SOS: necesito ayuda. Mi ubicación: ";
+  final String _messagePrefix = "SOS: necesito ayuda. Mi ubicación:";
 
   @override
   void initState() {
     super.initState();
-    _startSensors();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 1),
+      lowerBound: 0.9,
+      upperBound: 1.1,
+    )..repeat(reverse: true);
+
+    _loadNumber();
     _ensurePermissions();
   }
 
   @override
   void dispose() {
-    _accSub?.cancel();
-    _gyroSub?.cancel();
-    _countdownTimer?.cancel();
+    _timer?.cancel();
+    _pulseController.dispose();
     super.dispose();
   }
 
-  Future<void> _ensurePermissions() async {
-    await Permission.locationWhenInUse.request();
+  Future<void> _loadNumber() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _emergencyNumber = prefs.getString("emergencyNumber") ?? "";
+    });
   }
 
-  void _startSensors() {
-    _accSub = accelerometerEvents.listen((AccelerometerEvent e) {
-      setState(() {
-        _ax = e.x;
-        _ay = e.y;
-        _az = e.z;
-      });
-    });
-    _gyroSub = gyroscopeEvents.listen((GyroscopeEvent e) {
-      setState(() {
-        _gx = e.x;
-        _gy = e.y;
-        _gz = e.z;
-      });
-    });
+  Future<void> _saveNumber(String number) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString("emergencyNumber", number);
+    setState(() => _emergencyNumber = number);
+  }
+
+  Future<void> _ensurePermissions() async {
+    await Permission.location.request();
   }
 
   Future<void> _getLocation() async {
-    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) return;
-
-    LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) return;
-    }
-
-    if (permission == LocationPermission.deniedForever) return;
-
-    _lastPosition = await Geolocator.getCurrentPosition(
-      desiredAccuracy: LocationAccuracy.best,
-    );
-  }
-
-  void _vibrateStrong() {
-    Vibration.hasVibrator().then((has) {
-      if (has ?? false) {
-        Vibration.vibrate(pattern: [0, 200, 100, 400]);
+    try {
+      bool enabled = await Geolocator.isLocationServiceEnabled();
+      if (!enabled) {
+        debugPrint("GPS apagado");
+        return;
       }
-    });
+
+      LocationPermission perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied) {
+        perm = await Geolocator.requestPermission();
+        if (perm == LocationPermission.denied) {
+          debugPrint("Permiso denegado");
+          return;
+        }
+      }
+      if (perm == LocationPermission.deniedForever) {
+        debugPrint("Permiso denegado permanentemente");
+        return;
+      }
+
+      _lastPosition = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 5),
+      );
+
+      debugPrint("Ubicación obtenida: $_lastPosition");
+    } catch (e) {
+      debugPrint("Error obteniendo ubicación: $e");
+    }
   }
 
   Future<void> _sendSOS() async {
-    setState(() => _sosActive = true);
+    if (_emergencyNumber.isEmpty) {
+      _openNumberConfig();
+      return;
+    }
+
     await _getLocation();
 
     final coords = _lastPosition != null
         ? "https://maps.google.com/?q=${_lastPosition!.latitude},${_lastPosition!.longitude}"
         : "ubicación no disponible";
 
-    final message = "$_emergencyMessagePrefix $coords";
+    final msg = "$_messagePrefix $coords";
 
-    final smsUri =
-        Uri.parse("sms:$_emergencyNumber?body=${Uri.encodeComponent(message)}");
+    // SMS
+    final smsUri = Uri.parse("sms:$_emergencyNumber?body=${Uri.encodeComponent(msg)}");
+    if (await canLaunchUrl(smsUri)) await launchUrl(smsUri);
 
-    if (await canLaunchUrl(smsUri)) {
-      await launchUrl(smsUri);
+    // WhatsApp
+    final waUri = Uri.parse("https://wa.me/$_emergencyNumber?text=${Uri.encodeComponent(msg)}");
+    if (await canLaunchUrl(waUri)) await launchUrl(waUri);
+
+    if (await Vibration.hasVibrator() ?? false) {
+      Vibration.vibrate(pattern: [0, 200, 100, 300]);
     }
-
-    _vibrateStrong();
   }
 
   void _startCountdown() {
     if (_countingDown) return;
+
     setState(() {
       _countingDown = true;
       _countdown = 3;
     });
 
-    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+    _timer = Timer.periodic(const Duration(seconds: 1), (t) {
       setState(() => _countdown--);
-
       if (_countdown <= 0) {
         t.cancel();
         setState(() => _countingDown = false);
@@ -152,101 +166,179 @@ class _EmergencyHomePageState extends State<EmergencyHomePage> {
   }
 
   void _cancelCountdown() {
-    _countdownTimer?.cancel();
+    _timer?.cancel();
     setState(() {
       _countingDown = false;
       _countdown = 3;
     });
   }
 
-  Widget _buildCircularLayout(BuildContext context) {
-    final double size = MediaQuery.of(context).size.shortestSide * 0.9;
-
-    return Center(
-      child: SizedBox(
-        width: size,
-        height: size,
-        child: ClipOval(
-          child: Container(
-            color: Theme.of(context).colorScheme.background,
-            child: _buildInnerContent(context),
-          ),
+  void _openNumberConfig() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => NumberConfigPage(
+          initialValue: _emergencyNumber,
+          onSave: _saveNumber,
         ),
       ),
     );
   }
 
-  Widget _buildInnerContent(BuildContext context) {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        GestureDetector(
-          onLongPressStart: (_) => _startCountdown(),
-          onLongPressEnd: (_) => _cancelCountdown(),
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              Container(
-                width: 200,
-                height: 200,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: RadialGradient(
-                    colors: [Colors.red.shade400, Colors.red.shade800],
-                  ),
-                  boxShadow: const [
-                    BoxShadow(blurRadius: 8, spreadRadius: 1)
-                  ],
-                ),
-              ),
-              _countingDown
-                  ? Text(
-                      "$_countdown",
-                      style: const TextStyle(
-                        fontSize: 48,
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
+  // -----------------------------------------------------------------------------  
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size.shortestSide * 0.9;
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Center(
+        child: ClipOval(
+          child: SizedBox(
+            width: size,
+            height: size,
+            child: Stack(
+              children: [
+                GestureDetector(
+                  onLongPressStart: (_) => _startCountdown(),
+                  onLongPressEnd: (_) => _cancelCountdown(),
+                  child: ScaleTransition(
+                    scale: _pulseController,
+                    child: Container(
+                      decoration: const BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: RadialGradient(
+                          colors: [Colors.red, Colors.black87],
+                        ),
                       ),
-                    )
-                  : const Text(
-                      "SOS",
-                      style: TextStyle(
-                        fontSize: 32,
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
+                      child: Center(
+                        child: Text(
+                          _countingDown ? "$_countdown" : "SOS",
+                          style: const TextStyle(
+                            fontSize: 52,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
                       ),
                     ),
-            ],
+                  ),
+                ),
+                Positioned(
+                  bottom: 16,
+                  left: 0,
+                  right: 0,
+                  child: Center(
+                    child: ElevatedButton(
+                      onPressed: _openNumberConfig,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white12,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      ),
+                      child: const Text("Configurar número"),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
-        const SizedBox(height: 16),
-        _sosActive
-            ? const Text("SOS activado", style: TextStyle(color: Colors.red))
-            : const Text("Mantén pulsado para lanzar SOS"),
-
-        const SizedBox(height: 12),
-        Text("Acc: ${_ax.toStringAsFixed(2)}, ${_ay.toStringAsFixed(2)}, ${_az.toStringAsFixed(2)}"),
-        Text("Gyr: ${_gx.toStringAsFixed(2)}, ${_gy.toStringAsFixed(2)}, ${_gz.toStringAsFixed(2)}"),
-
-        const SizedBox(height: 8),
-        ElevatedButton(
-          onPressed: () => setState(() => _sosActive = false),
-          child: const Text("Desactivar SOS"),
-        ),
-      ],
+      ),
     );
+  }
+}
+
+// -----------------------------------------------------------------------------
+// PANTALLA CONFIGURAR NÚMERO
+// -----------------------------------------------------------------------------
+class NumberConfigPage extends StatefulWidget {
+  final String initialValue;
+  final Function(String) onSave;
+
+  const NumberConfigPage({
+    super.key,
+    required this.initialValue,
+    required this.onSave,
+  });
+
+  @override
+  State<NumberConfigPage> createState() => _NumberConfigPageState();
+}
+
+class _NumberConfigPageState extends State<NumberConfigPage> {
+  late TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialValue);
   }
 
   @override
   Widget build(BuildContext context) {
-    final isRound = MediaQuery.of(context).size.aspectRatio <= 1.0;
+    final size = MediaQuery.of(context).size;
 
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
-        child: isRound
-            ? _buildCircularLayout(context)
-            : _buildInnerContent(context),
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  "Número de emergencia",
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: size.width * 0.75,
+                  child: TextField(
+                    controller: _controller,
+                    keyboardType: TextInputType.phone,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                    ),
+                    decoration: const InputDecoration(
+                      hintText: "+34600111222",
+                      hintStyle: TextStyle(color: Colors.white54, fontSize: 12),
+                      enabledBorder: UnderlineInputBorder(
+                        borderSide: BorderSide(color: Colors.white54),
+                      ),
+                      focusedBorder: UnderlineInputBorder(
+                        borderSide: BorderSide(color: Colors.redAccent),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  height: 34,
+                  child: ElevatedButton(
+                    onPressed: () {
+                      widget.onSave(_controller.text.trim());
+                      Navigator.pop(context);
+                    },
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      textStyle: const TextStyle(fontSize: 12),
+                    ),
+                    child: const Text("Guardar"),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
