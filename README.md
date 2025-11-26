@@ -1,16 +1,45 @@
-# emergency_wear_app
+# Emergency Wear App (SOS Wear)
 
-A new Flutter project.
+Una aplicació Flutter per a Wear OS que permet enviar un **SOS** amb la teva ubicació per **SMS o WhatsApp** i activar vibració com alerta.
 
-## Getting Started
+---
 
-This project is a starting point for a Flutter application.
+## Característiques
 
-A few resources to get you started if this is your first Flutter project:
+- **Botó SOS gran i central** amb animació de pulsació.
+- **Comptador regressiu** de 3 segons abans d’enviar la senyal SOS.
+- Envia **SMS i WhatsApp** amb la teva ubicació (Google Maps).
+- **Configuració del número d’emergència** des d’una pantalla completa.
+- **Compatibilitat amb Wear OS** amb interficie circular.
+- **Vibració** per alertar que s’ha enviat el SOS.
+- Mostra dades dels sensors de moviment (acceleròmetre i giroscopi) (opcional).
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+---
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## Captures de pantalla
+
+*(Pots afegir aquí captures de l’emulador o dispositiu real)*
+
+---
+
+## Requeriments
+
+- Flutter >= 3.0
+- Android Studio amb **emulador Wear OS** o dispositiu físic Wear OS/Android.
+- Permisos:
+  - `ACCESS_FINE_LOCATION` i `ACCESS_COARSE_LOCATION`
+  - `SEND_SMS`
+  - `INTERNET` (per WhatsApp)
+  - `BODY_SENSORS` (opcional)
+  - `VIBRATE`
+
+---
+
+## Instal·lació
+
+1. Clona aquest repositori:
+
+```bash
+git clone https://github.com/el-teu-usuari/emergency_wear_app.git
+cd emergency_wear_app
+
